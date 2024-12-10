@@ -1,7 +1,9 @@
 export const EXPRESS_SERVER = `
     import express from 'express';
     import { join } from 'path';
+    import { fileURLToPath } from 'url';
 
+    const __dirname = fileURLToPath(new URL('.', import.meta.url));
     const { mastra } = await import(join(process.cwd(), 'mastra.mjs'));
 
     const app = express();
@@ -22,43 +24,38 @@ export const EXPRESS_SERVER = `
 
         return { ok: true };
     };
+    
+    // Serve static files from the Vite build first
+    app.use('/assets', express.static(join(__dirname, 'agent-chat/assets'), {
+      setHeaders: (res, path) => {
+        // Set correct MIME types
+        if (path.endsWith('.js')) {
+          res.set('Content-Type', 'application/javascript');
+        } else if (path.endsWith('.css')) {
+          res.set('Content-Type', 'text/css');
+        }
+      }
+    }));
 
-    app.get('/', (req, res) => {
-    res.send('Hello World!');
-    });
+    // Serve other static files
+    app.use(express.static(join(__dirname, 'agent-chat')));
 
+    // Serve the Vite app for /agent/:agentId
     app.get('/agent/:agentId', (req, res) => {
-    const agentId = req.params.agentId;
-    const agent = mastra.getAgent(agentId);
-
-    res.json({
-        agentId: agent.name,
-        enabledTools: agent.enabledTools,
-    });
+      res.sendFile(join(__dirname, 'agent-chat/index.html'));
     });
 
-    app.post('/agent/:agentId/text', async (req, res) => {
-    const agentId = req.params.agentId;
-
-    const agent = mastra.getAgent(agentId);
-
-    const messages = req.body.messages;
-
-    const result = await agent.text({ messages });
-
-    res.json(result);
-    });
-
+    // API routes
     app.post('/agent/:agentId/stream', async (req, res) => {
-    const agentId = req.params.agentId;
-    const agent = mastra.getAgent(agentId);
-    const messages = req.body.messages;
+      const agentId = req.params.agentId;
+      const agent = mastra.getAgent(agentId);
+      const messages = req.body.messages;
 
-    const streamResult = await agent.stream({
+      const streamResult = await agent.stream({
         messages,
-    });
+      });
 
-    streamResult.pipeDataStreamToResponse(res);
+      streamResult.pipeDataStreamToResponse(res);
     });
 
     app.post('/agent/:agentId/text-object', async (req, res) => {
@@ -116,21 +113,6 @@ export const EXPRESS_SERVER = `
         console.error('Error streaming structured output from agent', error);
         res.status(500).json({ error: 'Error streaming structured output from agent' });
         return;}
-    });
-
-    app.post('/workflows/:workflowId/execute', async (req, res) => {
-    const workflowId = req.params.workflowId;
-    const workflow = mastra.workflows.get(workflowId);
-
-    try {
-        console.log('req.body', req.body);
-        const result = await workflow.execute(req.body);
-        res.json(result);
-    } catch (error) {
-        console.error('Error executing workflow', error);
-        res.status(500).json({ error: 'Error executing workflow' });
-        return;
-    }
     });
 
     app.get('/memory/threads/get-by-resourceid/:resourceid', async (req, res) => {
@@ -419,7 +401,7 @@ export const EXPRESS_SERVER = `
     });
 
     app.listen(process.env.PORT || 4111, () => {
-    console.log(\`🦄Server running on port \${process.env.PORT || 4111}\`);
+      console.log(\`🦄Server running on port \${process.env.PORT || 4111}\`);
     });
 `;
 
