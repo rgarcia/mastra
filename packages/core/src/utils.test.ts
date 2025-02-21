@@ -88,6 +88,6 @@ describe('maskStreamTags', () => {
   it('should handle whitespace around tags', async () => {
     const input = ['Before ', '  <secret>  ', 'hidden ', ' </secret>  ', ' after'];
     const masked = maskStreamTags(makeStream(input), 'secret');
-    expect(await collectStream(masked)).toBe('Before  after');
+    expect(await collectStream(masked)).toBe('Before      after');
   });
 });

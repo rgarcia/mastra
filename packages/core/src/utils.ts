@@ -1,5 +1,5 @@
-import { z } from 'zod';
 import type { ZodObject } from 'zod';
+import { z } from 'zod';
 
 export const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -140,71 +140,117 @@ export interface TagMaskOptions {
  * @param tag Tag name to mask between (e.g. for <foo>...</foo>, use 'foo')
  * @param options Optional configuration for masking behavior
  */
-export async function* maskStreamTags(
-  stream: AsyncIterable<string>,
-  tag: string,
-  options: TagMaskOptions = {},
-): AsyncIterable<string> {
-  const { onStart, onEnd, onMask } = options;
+export async function* maskStreamTags(stream: AsyncIterable<string>, tag: string, options: TagMaskOptions = {}) {
+  const { onStart, onMask, onEnd } = options;
   const openTag = `<${tag}>`;
   const closeTag = `</${tag}>`;
-
-  let buffer = '';
-  let fullContent = '';
-  let isMasking = false;
-  let isBuffering = false;
-
-  // Helper to check if text starts with pattern (ignoring whitespace)
-  // When checking partial tags: startsWith(buffer, openTag) checks if buffer could be start of tag
-  // When checking full tags: startsWith(chunk, openTag) checks if chunk starts with full tag
-  const startsWith = (text: string, pattern: string) => text.trim().startsWith(pattern.trim());
+  let outside = true; // current state: outside of target tag content
+  let partialOpen = ''; // buffer for an incomplete opening tag sequence
+  let partialClose = ''; // buffer for an incomplete closing tag sequence
+  let skipBuffer = ''; // accumulates content of the masked section (for callback)
+  let outputBuffer = ''; // accumulates output text to yield
 
   for await (const chunk of stream) {
-    fullContent += chunk;
+    for (let i = 0; i < chunk.length; i++) {
+      const char = chunk[i];
 
-    if (isBuffering) buffer += chunk;
+      if (outside) {
+        // OUTSIDE STATE: looking for an opening tag
+        if (partialOpen) {
+          // We are in the middle of matching an open tag sequence
+          partialOpen += char;
 
-    const chunkHasTag = startsWith(chunk, openTag);
-    const bufferHasTag = !chunkHasTag && isBuffering && startsWith(openTag, buffer);
+          if (openTag.startsWith(partialOpen)) {
+            if (partialOpen === openTag) {
+              // Full opening tag matched
+              outside = false; // enter inside (masking) state
+              partialOpen = ''; // reset open tag buffer
+              if (onStart) onStart(); // trigger onStart callback
+              skipBuffer = openTag; // store the opening tag in masked content buffer
+            }
+            // If it's a prefix (but not complete) of openTag, do nothing (wait for more chars)
+            continue; // move to next character
+          } else {
+            // Mismatch: the gathered characters are not the target tag
+            outputBuffer += partialOpen; // flush the buffered chars as normal output            i--; // back up to reprocess the current character
+            partialOpen = ''; // reset buffer
+            // Note: we include the current char in the flushed output (it's part of partialOpen)
+            // and continue processing after this mismatch normally.
+            // No continue here, since we might need to process `char` again if it could start a new sequence.
+          }
+        } else if (!partialOpen) {
+          if (char === '<') {
+            // Potential start of a tag – begin buffering for a target open tag
+            partialOpen = '<';
+            // We'll verify in subsequent characters if this becomes <tagName>
+          } else {
+            // Regular character outside any target tag
+            outputBuffer += char;
+          }
+        }
+      } else {
+        // INSIDE STATE: currently masking content until closing tag is found
+        if (partialClose) {
+          // We have a partial closing tag sequence in progress
+          partialClose += char;
 
-    // Check if we should start masking chunks
-    if (!isMasking && (chunkHasTag || bufferHasTag)) {
-      isMasking = true;
-      isBuffering = false;
-      buffer = '';
-      onStart?.();
+          if (closeTag.startsWith(partialClose)) {
+            if (partialClose === closeTag) {
+              // Full closing tag matched – masked section ends here
+              if (onMask) onMask(skipBuffer.slice(openTag.length)); // callback with the content that was masked
+              if (onEnd) onEnd(); // callback signaling end of masking
+              outside = true; // exit masking state
+              partialClose = '';
+              skipBuffer = ''; // reset masked content buffer for next section
+            }
+            // If still a prefix of closeTag, just wait for more chars
+            continue;
+          } else {
+            // Mismatch: it wasn't actually the closing tag, treat buffered chars as content
+            skipBuffer += partialClose; // flush the buffered would-be closing sequence as regular masked content
+            partialClose = '';
+            // No `continue` here, we will reprocess the current char as content in the next branch
+            // (since the current char might be '<', which could start another closing sequence).
+          }
+        }
+
+        if (!partialClose) {
+          if (char === '<') {
+            // Possible start of closing tag (or another tag inside)
+            partialClose = '<';
+            if (i + 1 < chunk.length && chunk[i + 1] !== '/') {
+              // If the next char is not '/', this is not our closing tag –
+              // treat '<' as normal content and cancel partialClose
+              partialClose = '';
+              skipBuffer += '<';
+              continue;
+            }
+            // If next char is '/', we'll continue to collect and verify if it matches our closing tag.
+          } else {
+            // Any non-tag character inside the masked section
+            skipBuffer += char;
+          }
+        }
+      }
+    } // end for (chars in chunk)
+
+    // End of chunk: output any accumulated outside text
+    if (outputBuffer) {
+      yield outputBuffer;
+      outputBuffer = '';
     }
-
-    // Check if we should start buffering (looks like part of the opening tag but it's not the full <tag> yet eg <ta - could be <table> but we don't know yet)
-    if (!isMasking && !isBuffering && startsWith(openTag, chunk) && chunk.trim() !== '') {
-      isBuffering = true;
-      buffer += chunk;
-      continue;
-    }
-
-    // We're buffering, need to check again if our buffer has deviated from the opening <tag> eg <tag2>
-    if (isBuffering && buffer && !startsWith(openTag, buffer)) {
-      yield buffer;
-      buffer = '';
-      isBuffering = false;
-      continue;
-    }
-
-    // Check if we should stop masking chunks (since the content includes the closing </tag>)
-    if (isMasking && fullContent.trim().includes(closeTag)) {
-      onMask?.(chunk);
-      onEnd?.();
-      isMasking = false;
-      continue;
-    }
-
-    // We're currently masking chunks inside a <tag>
-    if (isMasking) {
-      onMask?.(chunk);
-      continue;
-    }
-
-    // default yield the chunk
-    yield chunk;
+    // (If still inside, we do not yield skipBuffer content; it remains buffered until the tag closes)
   }
+
+  // After all chunks are processed:
+  if (partialOpen) {
+    // Stream ended while attempting an open tag (incomplete target tag) – output it as is
+    outputBuffer += partialOpen;
+    partialOpen = '';
+  }
+  if (outputBuffer) {
+    yield outputBuffer;
+    outputBuffer = '';
+  }
+  // If still inside (a tag opened but never closed), we simply end without emitting that content or callbacks.
 }
