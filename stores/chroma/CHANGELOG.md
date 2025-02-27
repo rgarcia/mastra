@@ -1,5 +1,16 @@
 # @mastra/chroma
 
+## 0.1.6-alpha.1
+
+### Patch Changes
+
+- 5f28f44: Updated Chroma Vector to allow for document storage
+- Updated dependencies [ed55f1d]
+- Updated dependencies [8d13b14]
+- Updated dependencies [108793c]
+- Updated dependencies [5f28f44]
+  - @mastra/core@0.4.3-alpha.1
+
 ## 0.1.6-alpha.0
 
 ### Patch Changes
