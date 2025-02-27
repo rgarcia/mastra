@@ -1,5 +1,14 @@
 # @mastra/core
 
+## 0.4.3-alpha.1
+
+### Patch Changes
+
+- ed55f1d: Fixes to watch payload in workloads with nested branching
+- 8d13b14: Fixes early exits in workflows with branching
+- 108793c: Throw error when resourceId is not provided but Memory is configured and a threadId was passed
+- 5f28f44: Updated Chroma Vector to allow for document storage
+
 ## 0.4.3-alpha.0
 
 ### Patch Changes
