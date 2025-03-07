@@ -1,5 +1,14 @@
 # @mastra/memory
 
+## 0.2.0-alpha.9
+
+### Patch Changes
+
+- f2301de: Added the ability to ensure the accessed thread in memory.query() is for the right resource id. ex memory.query({ threadId, resourceId }). If the resourceId doesn't own the thread it will throw an error.
+- Updated dependencies [1e8bcbc]
+- Updated dependencies [f2301de]
+  - @mastra/core@0.5.0-alpha.9
+
 ## 0.2.0-alpha.8
 
 ### Patch Changes
